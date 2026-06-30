@@ -1,164 +1,94 @@
 import streamlit as st
 import pandas as pd
-import cadquery as cq
-from cadquery import importers
 
-st.set_page_config(layout="wide")
-st.title("🌍 STEP-Based Fabrication Cost Estimator")
+# Try STEP library (optional)
+try:
+    import cadquery as cq
+    from cadquery import importers
+    STEP_AVAILABLE = True
+except:
+    STEP_AVAILABLE = False
 
-# -------------------------
-# LOAD MATERIAL DATA
-# -------------------------
+st.title("🌍 Fabrication Cost Tool")
+
 df = pd.read_csv("material_rates.csv")
 
 # -------------------------
-# UPLOAD STEP FILE
+# STEP MODE or MANUAL MODE
 # -------------------------
-st.subheader("📂 Upload STEP File")
+mode = st.radio("Select Mode", ["Manual Input", "STEP File"])
 
-uploaded_file = st.file_uploader("Upload STEP file", type=["step", "stp"])
+if mode == "STEP File":
 
-if uploaded_file:
+    if not STEP_AVAILABLE:
+        st.error("STEP processing not available. Use local setup with Python 3.10")
+        st.stop()
 
-    with open("temp.step", "wb") as f:
-        f.write(uploaded_file.read())
+    file = st.file_uploader("Upload STEP", type=["step","stp"])
 
-    try:
+    if file:
+        with open("temp.step","wb") as f:
+            f.write(file.read())
+
         shape = importers.importStep("temp.step")
 
-        # Get solids
-        solids = shape.solids()
-
-        # Volume in mm³
-        volume_mm3 = sum([s.Volume() for s in solids])
-
-        # Bounding box
+        volume = sum([s.Volume() for s in shape.solids()])
         bbox = shape.val().BoundingBox()
 
-        length = bbox.xlen
-        width = bbox.ylen
-        height = bbox.zlen
+        length, width, height = bbox.xlen, bbox.ylen, bbox.zlen
 
-        # Convert
-        volume_m3 = volume_mm3 / 1e9
+        volume = volume / 1e9
 
-        st.success("✅ STEP file read successfully")
-
-    except:
-        st.error("❌ Error reading STEP file")
+    else:
         st.stop()
 
 else:
-    st.warning("Upload STEP file to continue")
-    st.stop()
+    length = st.number_input("Length (mm)")
+    width = st.number_input("Width (mm)")
+    height = st.number_input("Height (mm)")
+
+    volume = (length/1000)*(width/1000)*(height/1000)
 
 # -------------------------
-# USER INPUTS
+# MATERIAL
 # -------------------------
-regions = df["Region"].unique()
-materials = df["Material"].unique()
+region = st.selectbox("Region", df["Region"].unique())
+material = st.selectbox("Material", df["Material"].unique())
 
-region = st.selectbox("Region", regions)
-material = st.selectbox("Material", materials)
-quantity = st.number_input("Quantity", 1)
+density = {"MS":7850,"SS":8000,"Aluminum":2700}
 
-# -------------------------
-# MATERIAL PROPERTIES
-# -------------------------
-density = {
-    "MS": 7850,
-    "SS": 8000,
-    "Aluminum": 2700
-}
-
-weight = volume_m3 * density.get(material, 7850)
+weight = volume * density.get(material,7850)
 
 # -------------------------
-# SMART WELD ESTIMATION
+# WELD ESTIMATION
 # -------------------------
-def estimate_weld(L, W, H):
-    L = L / 1000
-    W = W / 1000
-    H = H / 1000
+def estimate_weld(L,W,H):
+    L/=1000; W/=1000; H/=1000
+    return (L+W+H)*1.5
 
-    if H < min(L, W) * 0.2:
-        return 2 * (L + W) * 0.6
-    elif abs(L - W) < 0.1 * L:
-        return 4 * (L + W + H)
-    else:
-        return (L + W + H) * 1.5
-
-weld_length = estimate_weld(length, width, height)
+weld_length = estimate_weld(length,width,height)
 
 # -------------------------
-# GET RATE
+# COST
 # -------------------------
-row = df[(df["Region"] == region) & (df["Material"] == material)]
-
-if row.empty:
-    st.error("Material not available")
-    st.stop()
+row = df[(df["Region"]==region)&(df["Material"]==material)]
 
 rate = float(row["Rate"].values[0])
 currency = row["Currency"].values[0]
 
-# -------------------------
-# COST CALCULATION
-# -------------------------
 material_cost = weight * rate
+welding_cost = weld_length * 50
 
-weld_rate = {
-    "India": 50,
-    "USA": 10,
-    "Germany": 9
-}.get(region, 50)
-
-welding_cost = weld_length * weld_rate
-
-total_cost = (material_cost + welding_cost) * quantity
+total = material_cost + welding_cost
 
 # -------------------------
-# OUTPUT RESULTS
+# OUTPUT
 # -------------------------
-st.subheader("📊 Results")
+st.write("Weight:", round(weight,2),"kg")
+st.write("Volume:", round(volume,5),"m3")
+st.write("Weld Length:", round(weld_length,2))
 
-col1, col2, col3 = st.columns(3)
+st.write("Material Cost:", currency, round(material_cost,2))
+st.write("Welding Cost:", currency, round(welding_cost,2))
 
-col1.metric("Weight (kg)", f"{weight:.2f}")
-col2.metric("Volume (m³)", f"{volume_m3:.6f}")
-col3.metric("Weld Length (m)", f"{weld_length:.2f}")
-
-st.write(f"Material Cost: {currency} {material_cost:.2f}")
-st.write(f"Welding Cost: {currency} {welding_cost:.2f}")
-
-st.success(f"✅ Total Cost: {currency} {total_cost:.2f}")
-
-# -------------------------
-# SUMMARY TABLE
-# -------------------------
-data = {
-    "Parameter": [
-        "Material", "Region", "Volume", "Weight",
-        "Weld Length", "Material Cost", "Welding Cost", "Total Cost"
-    ],
-    "Value": [
-        material, region,
-        round(volume_m3, 6),
-        round(weight, 2),
-        round(weld_length, 2),
-        round(material_cost, 2),
-        round(welding_cost, 2),
-        round(total_cost, 2)
-    ]
-}
-
-st.subheader("📋 Summary")
-st.table(pd.DataFrame(data))
-
-# -------------------------
-# DEBUG INFO (Optional)
-# -------------------------
-st.subheader("📦 Geometry Info")
-st.write(f"Length: {length:.2f} mm")
-st.write(f"Width: {width:.2f} mm")
-st.write(f"Height: {height:.2f} mm")
+st.success(f"Total Cost: {currency} {round(total,2)}")
