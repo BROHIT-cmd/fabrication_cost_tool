@@ -1,91 +1,77 @@
 import streamlit as st
 import pandas as pd
-import cadquery as cq
-from cadquery import importers
-from datetime import datetime
 
-st.title("🌍 AI Fabrication Cost Estimator (STEP Enabled)")
+# ----------------------
+# APP TITLE
+# ----------------------
+st.set_page_config(page_title="Fabrication Cost Tool", layout="wide")
+st.title("🌍 Global Fabrication Cost Estimator")
 
-# -------------------------
+# ----------------------
 # LOAD DATA
-# -------------------------
+# ----------------------
 df = pd.read_csv("material_rates.csv")
 
-# -------------------------
-# STEP FILE UPLOAD
-# -------------------------
-st.subheader("📂 Upload STEP File")
+# ----------------------
+# INPUT SECTION
+# ----------------------
+st.sidebar.header("🔧 Input Parameters")
 
-uploaded_file = st.file_uploader("Upload STEP (.step/.stp)", type=["step", "stp"])
+region = st.sidebar.selectbox("Select Region", sorted(df["Region"].unique()))
+material = st.sidebar.selectbox("Select Material", sorted(df["Material"].unique()))
+quantity = st.sidebar.number_input("Quantity", min_value=1, value=1)
 
-volume = 0
-bounding_dims = (0, 0, 0)
+unit_system = st.sidebar.selectbox(
+    "Unit System", ["Metric (mm, kg)", "Imperial (inch, lb)"]
+)
 
-if uploaded_file:
-    with open("temp.step", "wb") as f:
-        f.write(uploaded_file.read())
+# ----------------------
+# GEOMETRY INPUT
+# ----------------------
+st.subheader("📏 Geometry")
 
-    try:
-        shape = importers.importStep("temp.step")
+length = st.number_input("Length", value=100.0)
+width = st.number_input("Width", value=50.0)
+height = st.number_input("Height", value=10.0)
 
-        # Volume
-        solids = shape.solids()
-        volume = sum([s.Volume() for s in solids])  # mm³
+# ----------------------
+# UNIT CONVERSION
+# ----------------------
+if unit_system == "Imperial (inch, lb)":
+    length = length * 25.4
+    width = width * 25.4
+    height = height * 25.4
 
-        # Bounding box
-        bbox = shape.val().BoundingBox()
-        lx = bbox.xlen
-        ly = bbox.ylen
-        lz = bbox.zlen
+# convert to meters
+L = length / 1000
+W = width / 1000
+H = height / 1000
 
-        bounding_dims = (lx, ly, lz)
+volume = L * W * H
 
-        st.success("✅ STEP File Processed Successfully")
-
-    except Exception as e:
-        st.error("Error reading STEP file")
-        st.stop()
-
-# -------------------------
-# USER INPUTS
-# -------------------------
-regions = df["Region"].unique()
-materials = df["Material"].unique()
-
-region = st.selectbox("Region", regions)
-material = st.selectbox("Material", materials)
-quantity = st.number_input("Quantity", value=1)
-
-# -------------------------
+# ----------------------
 # MATERIAL PROPERTIES
-# -------------------------
+# ----------------------
 density = {
     "MS": 7850,
     "SS": 8000,
     "Aluminum": 2700
 }
 
-# -------------------------
-# GEOMETRY CALCULATION
-# -------------------------
-if volume > 0:
-    volume_m3 = volume / 1e9  # convert mm³ → m³
-    weight = volume_m3 * density.get(material, 7850)
+weight = volume * density.get(material, 7850)
 
-    length, width, height = bounding_dims
-
+# weight conversion display
+if unit_system == "Imperial (inch, lb)":
+    weight_display = weight * 2.20462
+    weight_unit = "lb"
 else:
-    st.warning("Upload STEP file to calculate geometry")
-    st.stop()
+    weight_display = weight
+    weight_unit = "kg"
 
-# -------------------------
-# WELD ESTIMATION
-# -------------------------
+# ----------------------
+# SMART WELD ESTIMATION
+# ----------------------
 def estimate_weld(L, W, H):
-    L /= 1000
-    W /= 1000
-    H /= 1000
-
     if H < min(L, W) * 0.2:
         return 2 * (L + W) * 0.6
     elif abs(L - W) < 0.1 * L:
@@ -93,85 +79,116 @@ def estimate_weld(L, W, H):
     else:
         return (L + W + H) * 1.5
 
-weld_length = estimate_weld(length, width, height)
+weld_length = estimate_weld(L, W, H)
 
-# -------------------------
+# ----------------------
 # GET RATE
-# -------------------------
+# ----------------------
 row = df[(df["Region"] == region) & (df["Material"] == material)]
 
-if len(row) == 0:
-    st.error("Material not available in selected region")
+if row.empty:
+    st.error("❌ Material not available for selected region")
     st.stop()
 
 rate = float(row["Rate"].values[0])
 currency = row["Currency"].values[0]
+last_updated = row["LastUpdated"].values[0]
 
-# -------------------------
-# COST CALCULATION
-# -------------------------
-material_cost = weight * rate
-
-# Welding rates (region-based rough)
-weld_rate_map = {
+# ----------------------
+# WELD COST RATE
+# ----------------------
+weld_rate = {
     "India": 50,
     "USA": 10,
-    "Germany": 9
-}
+    "Germany": 9,
+    "UAE": 35
+}.get(region, 50)
 
-weld_rate = weld_rate_map.get(region, 50)
-
+# ----------------------
+# COST CALCULATION
+# ----------------------
+material_cost = weight * rate
 welding_cost = weld_length * weld_rate
-
 total_cost = (material_cost + welding_cost) * quantity
 
-# -------------------------
+# ----------------------
 # OUTPUT
-# -------------------------
+# ----------------------
 st.subheader("📊 Results")
 
-st.write(f"Volume: {volume_m3:.6f} m³")
-st.write(f"Weight: {weight:.2f} kg")
-st.write(f"Bounding Box: {length:.1f} × {width:.1f} × {height:.1f} mm")
+col1, col2, col3 = st.columns(3)
 
-st.write(f"Material Cost: {currency} {material_cost:.2f}")
-st.write(f"Welding Cost: {currency} {welding_cost:.2f}")
-st.write(f"✅ Total Cost: {currency} {total_cost:.2f}")
+col1.metric("Weight", f"{weight_display:.2f} {weight_unit}")
+col2.metric("Volume (m³)", f"{volume:.5f}")
+col3.metric("Weld Length (m)", f"{weld_length:.2f}")
 
-# -------------------------
+st.write(f"Material Cost: **{currency} {material_cost:.2f}**")
+st.write(f"Welding Cost: **{currency} {welding_cost:.2f}**")
+st.success(f"✅ Total Cost: {currency} {total_cost:.2f}")
+
+# ----------------------
 # SUMMARY TABLE
-# -------------------------
+# ----------------------
+st.subheader("📋 Summary Table")
+
 data = {
-    "Material": material,
-    "Region": region,
-    "Weight (kg)": round(weight, 2),
-    "Volume (m3)": round(volume_m3, 6),
-    "Weld Length (m)": round(weld_length, 2),
-    "Material Cost": round(material_cost, 2),
-    "Welding Cost": round(welding_cost, 2),
-    "Total Cost": round(total_cost, 2)
+    "Parameter": [
+        "Material","Region","Volume (m3)","Weight",
+        "Weld Length","Material Cost","Welding Cost","Total Cost"
+    ],
+    "Value": [
+        material, region, round(volume,5),
+        f"{weight_display:.2f} {weight_unit}",
+        round(weld_length,2),
+        round(material_cost,2),
+        round(welding_cost,2),
+        round(total_cost,2)
+    ]
 }
 
-df_summary = pd.DataFrame(data.items(), columns=["Parameter", "Value"])
-
-st.subheader("📋 Summary Table")
+df_summary = pd.DataFrame(data)
 st.table(df_summary)
 
-# -------------------------
-# CONVERTERS
-# -------------------------
-st.subheader("🔧 Utility")
+# ----------------------
+# GLOBAL COST COMPARISON
+# ----------------------
+st.subheader("🌍 Global Comparison")
+
+compare_data = []
+for r in df["Region"].unique():
+    row_temp = df[(df["Region"] == r) & (df["Material"] == material)]
+    if not row_temp.empty:
+        r_rate = float(row_temp["Rate"].values[0])
+        r_currency = row_temp["Currency"].values[0]
+        cost = weight * r_rate
+        compare_data.append([r, f"{r_currency} {cost:.2f}"])
+
+compare_df = pd.DataFrame(compare_data, columns=["Region","Material Cost"])
+st.dataframe(compare_df)
+
+# ----------------------
+# UTILITY TOOLS
+# ----------------------
+st.subheader("🔧 Utility Tools")
+
+# Currency converter (manual)
+st.write("### 💱 Currency Converter")
+amt = st.number_input("Enter Amount")
+conv = st.number_input("Conversion Rate")
+st.write("Converted:", amt * conv)
 
 # Weight converter
-kg = st.number_input("Weight kg")
-st.write("In lb:", kg * 2.20462)
+st.write("### ⚖ Weight Converter")
+kg = st.number_input("kg", key="kg")
+st.write("lb:", kg * 2.20462)
 
 # Volume converter
-v = st.number_input("Volume m3")
-st.write("Liters:", v * 1000)
+st.write("### 📦 Volume Converter")
+m3 = st.number_input("m3", key="m3")
+st.write("liters:", m3 * 1000)
 
-# -------------------------
-# TRUST DATA
-# -------------------------
-st.write("Last Updated:", datetime.now().strftime("%Y-%m-%d"))
-st.write("Source: Internal + Engineering Estimation")
+# ----------------------
+# TRUST INFO
+# ----------------------
+st.caption(f"Last Updated: {last_updated}")
+st.caption("Source: Internal + Engineering Estimation")
