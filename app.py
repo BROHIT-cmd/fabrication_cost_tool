@@ -1,77 +1,87 @@
 import streamlit as st
 import pandas as pd
+import requests
 
-# Try STEP library (optional)
-try:
-    import cadquery as cq
-    from cadquery import importers
-    STEP_AVAILABLE = True
-except:
-    STEP_AVAILABLE = False
+st.set_page_config(layout="wide")
+st.title("🌍 Fabrication Cost Tool (STEP Enabled)")
 
-st.title("🌍 Fabrication Cost Tool")
-
+# -------------------------
+# LOAD MATERIAL DATA
+# -------------------------
 df = pd.read_csv("material_rates.csv")
 
 # -------------------------
-# STEP MODE or MANUAL MODE
+# STEP FILE UPLOAD
 # -------------------------
-mode = st.radio("Select Mode", ["Manual Input", "STEP File"])
+st.subheader("📂 Upload STEP File")
 
-if mode == "STEP File":
+uploaded_file = st.file_uploader("Upload STEP file", type=["step", "stp"])
 
-    if not STEP_AVAILABLE:
-        st.error("STEP processing not available. Use local setup with Python 3.10")
-        st.stop()
+if uploaded_file is not None:
 
-    file = st.file_uploader("Upload STEP", type=["step","stp"])
+    if st.button("Process STEP File"):
 
-    if file:
-        with open("temp.step","wb") as f:
-            f.write(file.read())
+        SERVER_URL = "http://127.0.0.1:5000/process_step"
 
-        shape = importers.importStep("temp.step")
+        try:
+            response = requests.post(
+                SERVER_URL,
+                files={"file": uploaded_file.getvalue()}
+            )
 
-        volume = sum([s.Volume() for s in shape.solids()])
-        bbox = shape.val().BoundingBox()
+            data = response.json()
 
-        length, width, height = bbox.xlen, bbox.ylen, bbox.zlen
+        except:
+            st.error("❌ Cannot connect to STEP server")
+            st.stop()
 
-        volume = volume / 1e9
+        if "error" in data:
+            st.error("❌ STEP processing failed")
+            st.stop()
 
-    else:
-        st.stop()
+        volume = data["volume"]
+        length = data["length"]
+        width = data["width"]
+        height = data["height"]
+
+        st.success("✅ STEP file processed successfully")
 
 else:
-    length = st.number_input("Length (mm)")
-    width = st.number_input("Width (mm)")
-    height = st.number_input("Height (mm)")
-
-    volume = (length/1000)*(width/1000)*(height/1000)
+    st.warning("Upload STEP file to continue")
+    st.stop()
 
 # -------------------------
-# MATERIAL
+# USER INPUTS
 # -------------------------
 region = st.selectbox("Region", df["Region"].unique())
 material = st.selectbox("Material", df["Material"].unique())
 
-density = {"MS":7850,"SS":8000,"Aluminum":2700}
+# -------------------------
+# MATERIAL PROPERTIES
+# -------------------------
+density = {
+    "MS": 7850,
+    "SS": 8000,
+    "Aluminum": 2700
+}
 
-weight = volume * density.get(material,7850)
+weight = volume * density.get(material, 7850)
 
 # -------------------------
 # WELD ESTIMATION
 # -------------------------
-def estimate_weld(L,W,H):
-    L/=1000; W/=1000; H/=1000
-    return (L+W+H)*1.5
+def estimate_weld(L, W, H):
+    L /= 1000
+    W /= 1000
+    H /= 1000
+    return (L + W + H) * 1.5
 
-weld_length = estimate_weld(length,width,height)
+weld_length = estimate_weld(length, width, height)
 
 # -------------------------
-# COST
+# COST CALCULATION
 # -------------------------
-row = df[(df["Region"]==region)&(df["Material"]==material)]
+row = df[(df["Region"] == region) & (df["Material"] == material)]
 
 rate = float(row["Rate"].values[0])
 currency = row["Currency"].values[0]
@@ -79,16 +89,18 @@ currency = row["Currency"].values[0]
 material_cost = weight * rate
 welding_cost = weld_length * 50
 
-total = material_cost + welding_cost
+total_cost = material_cost + welding_cost
 
 # -------------------------
 # OUTPUT
 # -------------------------
-st.write("Weight:", round(weight,2),"kg")
-st.write("Volume:", round(volume,5),"m3")
-st.write("Weld Length:", round(weld_length,2))
+st.subheader("📊 Results")
 
-st.write("Material Cost:", currency, round(material_cost,2))
-st.write("Welding Cost:", currency, round(welding_cost,2))
+st.write(f"Volume: {volume:.6f} m³")
+st.write(f"Weight: {weight:.2f} kg")
+st.write(f"Weld Length: {weld_length:.2f} m")
 
-st.success(f"Total Cost: {currency} {round(total,2)}")
+st.write(f"Material Cost: {currency} {material_cost:.2f}")
+st.write(f"Welding Cost: {currency} {welding_cost:.2f}")
+
+st.success(f"✅ Total Cost: {currency} {total_cost:.2f}")
