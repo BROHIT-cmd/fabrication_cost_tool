@@ -6,9 +6,18 @@ st.set_page_config(layout="wide")
 st.title("🌍 Fabrication Cost Tool (STEP Enabled)")
 
 # -------------------------
-# LOAD MATERIAL DATA
+# LOAD DATA
 # -------------------------
 df = pd.read_csv("material_rates.csv")
+
+# -------------------------
+# INIT SESSION STATE ✅ (IMPORTANT FIX)
+# -------------------------
+if "volume" not in st.session_state:
+    st.session_state.volume = None
+    st.session_state.length = None
+    st.session_state.width = None
+    st.session_state.height = None
 
 # -------------------------
 # STEP FILE UPLOAD
@@ -31,24 +40,21 @@ if uploaded_file is not None:
 
             data = response.json()
 
+            if "error" in data:
+                st.error("❌ STEP processing failed")
+                st.stop()
+
+            # ✅ STORE IN SESSION STATE
+            st.session_state.volume = data["volume"]
+            st.session_state.length = data["length"]
+            st.session_state.width = data["width"]
+            st.session_state.height = data["height"]
+
+            st.success("✅ STEP file processed successfully")
+
         except:
             st.error("❌ Cannot connect to STEP server")
             st.stop()
-
-        if "error" in data:
-            st.error("❌ STEP processing failed")
-            st.stop()
-
-        volume = data["volume"]
-        length = data["length"]
-        width = data["width"]
-        height = data["height"]
-
-        st.success("✅ STEP file processed successfully")
-
-else:
-    st.warning("Upload STEP file to continue")
-    st.stop()
 
 # -------------------------
 # USER INPUTS
@@ -57,50 +63,24 @@ region = st.selectbox("Region", df["Region"].unique())
 material = st.selectbox("Material", df["Material"].unique())
 
 # -------------------------
-# MATERIAL PROPERTIES
+# USE STORED DATA ✅
 # -------------------------
-density = {
-    "MS": 7850,
-    "SS": 8000,
-    "Aluminum": 2700
-}
-
-weight = volume * density.get(material, 7850)
+volume = st.session_state.volume
+length = st.session_state.length
+width = st.session_state.width
+height = st.session_state.height
 
 # -------------------------
-# WELD ESTIMATION
+# CALCULATIONS ✅ SAFE
 # -------------------------
-def estimate_weld(L, W, H):
-    L /= 1000
-    W /= 1000
-    H /= 1000
-    return (L + W + H) * 1.5
+if volume is not None:
 
-weld_length = estimate_weld(length, width, height)
+    density = {
+        "MS": 7850,
+        "SS": 8000,
+        "Aluminum": 2700
+    }
 
-# -------------------------
-# COST CALCULATION
-# -------------------------
-row = df[(df["Region"] == region) & (df["Material"] == material)]
+    weight = volume * density.get(material, 7850)
 
-rate = float(row["Rate"].values[0])
-currency = row["Currency"].values[0]
-
-material_cost = weight * rate
-welding_cost = weld_length * 50
-
-total_cost = material_cost + welding_cost
-
-# -------------------------
-# OUTPUT
-# -------------------------
-st.subheader("📊 Results")
-
-st.write(f"Volume: {volume:.6f} m³")
-st.write(f"Weight: {weight:.2f} kg")
-st.write(f"Weld Length: {weld_length:.2f} m")
-
-st.write(f"Material Cost: {currency} {material_cost:.2f}")
-st.write(f"Welding Cost: {currency} {welding_cost:.2f}")
-
-st.success(f"✅ Total Cost: {currency} {total_cost:.2f}")
+    def estimate_weld(L, W, H):
