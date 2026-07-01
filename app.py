@@ -1,28 +1,31 @@
 import streamlit as st
-import pandas as pd
 import subprocess
 
 st.title("Simple STEP Cost Tool")
 
-# ------------------------
 # Upload STEP file
-# ------------------------
-uploaded_file = st.file_uploader("Upload STEP file", type=["step", "stp"])
+file = st.file_uploader("Upload STEP file", type=["step","stp"])
 
-if uploaded_file:
-
-    # Save file
+if file:
+    # Save file locally
     with open("temp.step", "wb") as f:
-        f.write(uploaded_file.read())
+        f.write(file.read())
 
-    # Process STEP
-    if st.button("Calculate"):
+    if st.button("Calculate Cost"):
 
+        # Run FreeCAD command
         result = subprocess.run(
             [
                 r"C:\Program Files\FreeCAD 0.21\bin\FreeCADCmd.exe",
-                "step_reader_simple.py",
-                "temp.step"
+                "-c",
+                """
+import Part
+shape=Part.Shape()
+shape.read('temp.step')
+v=shape.Volume
+bb=shape.BoundBox
+print(str(v)+","+str(bb.XLength)+","+str(bb.YLength)+","+str(bb.ZLength))
+"""
             ],
             capture_output=True,
             text=True
@@ -30,30 +33,32 @@ if uploaded_file:
 
         output = result.stdout.strip()
 
-        volume, length, width, height = map(float, output.split(","))
+        if output == "":
+            st.error("STEP read failed")
+        else:
+            volume, L, W, H = map(float, output.split(","))
 
-        volume = volume / 1e9  # convert mm³ to m³
+            volume = volume / 1e9  # mm³ → m³
 
-        # ------------------------
-        # User Inputs
-        # ------------------------
-        material = st.selectbox("Material", ["MS", "SS", "Aluminum"])
-        region = st.selectbox("Region", ["India", "USA"])
+            # Simple inputs
+            material = st.selectbox("Material", ["MS","SS","Aluminum"])
+            region = st.selectbox("Region", ["India","USA"])
 
-        density = {"MS": 7850, "SS": 8000, "Aluminum": 2700}
-        rate = {"India": 70, "USA": 1.2}
+            density = {"MS":7850,"SS":8000,"Aluminum":2700}
+            rate = {"India":70,"USA":1.2}
 
-        weight = volume * density[material]
+            weight = volume * density[material]
 
-        material_cost = weight * rate[region]
-        welding_cost = (length + width + height)/1000 * 50
-        total_cost = material_cost + welding_cost
+            # Simple weld estimate
+            weld = (L + W + H)/1000
 
-        # ------------------------
-        # Output
-        # ------------------------
-        st.success("STEP processed")
+            material_cost = weight * rate[region]
+            welding_cost = weld * 50
+            total_cost = material_cost + welding_cost
 
-        st.write("Volume (m3):", round(volume, 6))
-        st.write("Weight (kg):", round(weight, 2))
-        st.write("Total Cost:", total_cost)
+            # Output
+            st.success("✅ Done")
+
+            st.write("Volume (m3):", round(volume,6))
+            st.write("Weight (kg):", round(weight,2))
+            st.write("Total Cost:", round(total_cost,2))
