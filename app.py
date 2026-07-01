@@ -1,90 +1,59 @@
 import streamlit as st
 import pandas as pd
-import requests
+import subprocess
 
-st.set_page_config(layout="wide")
-st.title("🌍 Fabrication Cost Tool (STEP Enabled)")
+st.title("Simple STEP Cost Tool")
 
-# -------------------------
-# LOAD DATA
-# -------------------------
-df = pd.read_csv("material_rates.csv")
-
-# -------------------------
-# INIT SESSION STATE ✅ (IMPORTANT FIX)
-# -------------------------
-if "volume" not in st.session_state:
-    st.session_state.volume = None
-    st.session_state.length = None
-    st.session_state.width = None
-    st.session_state.height = None
-
-# -------------------------
-# STEP FILE UPLOAD
-# -------------------------
-st.subheader("📂 Upload STEP File")
-
+# ------------------------
+# Upload STEP file
+# ------------------------
 uploaded_file = st.file_uploader("Upload STEP file", type=["step", "stp"])
 
-if uploaded_file is not None:
+if uploaded_file:
 
-    if st.button("Process STEP File"):
+    # Save file
+    with open("temp.step", "wb") as f:
+        f.write(uploaded_file.read())
 
-        SERVER_URL = "http://127.0.0.1:5000/process_step"
+    # Process STEP
+    if st.button("Calculate"):
 
-        try:
-            response = requests.post(
-                SERVER_URL,
-                files={"file": uploaded_file.getvalue()}
-            )
+        result = subprocess.run(
+            [
+                r"C:\Program Files\FreeCAD 0.21\bin\FreeCADCmd.exe",
+                "step_reader_simple.py",
+                "temp.step"
+            ],
+            capture_output=True,
+            text=True
+        )
 
-            data = response.json()
+        output = result.stdout.strip()
 
-            if "error" in data:
-                st.error("❌ STEP processing failed")
-                st.stop()
+        volume, length, width, height = map(float, output.split(","))
 
-            # ✅ STORE IN SESSION STATE
-            st.session_state.volume = data["volume"]
-            st.session_state.length = data["length"]
-            st.session_state.width = data["width"]
-            st.session_state.height = data["height"]
+        volume = volume / 1e9  # convert mm³ to m³
 
-            st.success("✅ STEP file processed successfully")
+        # ------------------------
+        # User Inputs
+        # ------------------------
+        material = st.selectbox("Material", ["MS", "SS", "Aluminum"])
+        region = st.selectbox("Region", ["India", "USA"])
 
-        except:
-            st.error("❌ Cannot connect to STEP server")
-            st.stop()
+        density = {"MS": 7850, "SS": 8000, "Aluminum": 2700}
+        rate = {"India": 70, "USA": 1.2}
 
-# -------------------------
-# USER INPUTS
-# -------------------------
-region = st.selectbox("Region", df["Region"].unique())
-material = st.selectbox("Material", df["Material"].unique())
+        weight = volume * density[material]
 
-# -------------------------
-# USE STORED DATA ✅
-# -------------------------
-volume = st.session_state.volume
-length = st.session_state.length
-width = st.session_state.width
-height = st.session_state.height
+        material_cost = weight * rate[region]
+        welding_cost = (length + width + height)/1000 * 50
+        total_cost = material_cost + welding_cost
 
-# -------------------------
-# CALCULATIONS ✅ SAFE
-# -------------------------
-if volume is not None:
+        # ------------------------
+        # Output
+        # ------------------------
+        st.success("STEP processed")
 
-    density = {
-        "MS": 7850,
-        "SS": 8000,
-        "Aluminum": 2700
-    }
-
-    weight = volume * density.get(material, 7850)
-
-def estimate_weld(L, W, H):
-    L /= 1000
-    W /= 1000
-    H /= 1000
-    return (L + W + H) * 1.5
+        st.write("Volume (m3):", round(volume, 6))
+        st.write("Weight (kg):", round(weight, 2))
+        st.write("Total Cost:", total_cost)
