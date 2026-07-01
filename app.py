@@ -83,4 +83,8 @@ if volume is not None:
 
     weight = volume * density.get(material, 7850)
 
-    def estimate_weld(L, W, H):
+def estimate_weld(L, W, H):
+    L /= 1000
+    W /= 1000
+    H /= 1000
+    return (L + W + H) * 1.5
