@@ -16,7 +16,7 @@ if file:
         # Run FreeCAD command
         result = subprocess.run(
             [
-                r"C:\Program Files\FreeCAD 0.21\bin\FreeCADCmd.exe",
+                r"C:\Users\BROHIT\FreeCADCmd.exe",
                 "-c",
                 """
 import Part
