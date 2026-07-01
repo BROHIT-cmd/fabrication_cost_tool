@@ -1,64 +1,33 @@
 import streamlit as st
-import subprocess
+import tempfile
+from step_utils import calculate_volume
 
-st.title("Simple STEP Cost Tool")
+st.set_page_config(page_title="STEP Volume Calculator")
 
-# Upload STEP file
-file = st.file_uploader("Upload STEP file", type=["step","stp"])
+st.title("📦 STEP File Volume Calculator")
 
-if file:
-    # Save file locally
-    with open("temp.step", "wb") as f:
-        f.write(file.read())
+uploaded_file = st.file_uploader(
+    "Upload STEP file",
+    type=["step", "stp"]
+)
 
-    if st.button("Calculate Cost"):
+if uploaded_file is not None:
+    # Save file temporarily
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp.write(uploaded_file.read())
+        temp_path = tmp.name
 
-        # Run FreeCAD command
-        result = subprocess.run(
-            [
-                r"C:\Program Files\FreeCAD\FreeCADcmd.exe",
-                "-c",
-                """
-import Part
-shape=Part.Shape()
-shape.read('temp.step')
-v=shape.Volume
-bb=shape.BoundBox
-print(str(v)+","+str(bb.XLength)+","+str(bb.YLength)+","+str(bb.ZLength))
-"""
-            ],
-            capture_output=True,
-            text=True
-        )
+    try:
+        volume = calculate_volume(temp_path)
 
-        output = result.stdout.strip()
+        st.success("✅ Volume calculated successfully!")
+        st.write(f"### Volume: {volume:.2f} cubic units")
 
-        if output == "":
-            st.error("STEP read failed")
-        else:
-            volume, L, W, H = map(float, output.split(","))
+        # Unit conversion
+        st.write("#### Convert to:")
+        st.write(f"- cm³: {volume/1000:.2f}")
+        st.write(f"- liters: {volume/1e6:.4f}")
+        st.write(f"- m³: {volume/1e9:.6f}")
 
-            volume = volume / 1e9  # mm³ → m³
-
-            # Simple inputs
-            material = st.selectbox("Material", ["MS","SS","Aluminum"])
-            region = st.selectbox("Region", ["India","USA"])
-
-            density = {"MS":7850,"SS":8000,"Aluminum":2700}
-            rate = {"India":70,"USA":1.2}
-
-            weight = volume * density[material]
-
-            # Simple weld estimate
-            weld = (L + W + H)/1000
-
-            material_cost = weight * rate[region]
-            welding_cost = weld * 50
-            total_cost = material_cost + welding_cost
-
-            # Output
-            st.success("✅ Done")
-
-            st.write("Volume (m3):", round(volume,6))
-            st.write("Weight (kg):", round(weight,2))
-            st.write("Total Cost:", round(total_cost,2))
+    except Exception as e:
+        st.error(f"❌ Error: {str(e)}")
